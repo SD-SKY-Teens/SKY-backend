@@ -24,7 +24,7 @@ TURSO_DATABASE_URL = os.environ.get('TURSO_DATABASE_URL', '')
 TURSO_AUTH_TOKEN = os.environ.get('TURSO_AUTH_TOKEN', '')
 
 # Secret key for JWT-like tokens
-SECRET_KEY = os.environ.get('SECRET_KEY', 'sky-pulse-dev-secret-change-in-production')
+SECRET_KEY = os.environ.get('SECRET_KEY', 'sudharshan_kriya')
 
 # Admin credentials (should be in environment variables in production)
 ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
@@ -340,11 +340,10 @@ def create_student():
         INSERT INTO students (name, email, student_key, sessions, total_hours)
         VALUES (?, ?, ?, 0, 0)
     ''', (name, email, student_key))
-
-    student_id = cursor.lastrowid
     conn.commit()
 
-    cursor.execute('SELECT * FROM students WHERE id = ?', (student_id,))
+    # Get the newly created student using the unique student_key
+    cursor.execute('SELECT * FROM students WHERE student_key = ?', (student_key,))
     student = student_to_dict(cursor.fetchone())
     conn.close()
 
@@ -380,15 +379,18 @@ def update_student(student_id):
 
     conn = get_db()
     cursor = conn.cursor()
+
+    # Check if student exists first
+    cursor.execute('SELECT id FROM students WHERE id = ?', (student_id,))
+    if not cursor.fetchone():
+        conn.close()
+        return jsonify({'error': 'Student not found'}), 404
+
     cursor.execute('''
         UPDATE students
         SET name = ?, email = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
     ''', (name, email, student_id))
-
-    if cursor.rowcount == 0:
-        conn.close()
-        return jsonify({'error': 'Student not found'}), 404
 
     conn.commit()
     cursor.execute('SELECT * FROM students WHERE id = ?', (student_id,))
@@ -405,15 +407,17 @@ def delete_student(student_id):
     conn = get_db()
     cursor = conn.cursor()
 
-    # First delete from event_students
+    # Check if student exists first
+    cursor.execute('SELECT id FROM students WHERE id = ?', (student_id,))
+    if not cursor.fetchone():
+        conn.close()
+        return jsonify({'error': 'Student not found'}), 404
+
+    # Delete from event_students first
     cursor.execute('DELETE FROM event_students WHERE student_id = ?', (student_id,))
 
     # Then delete the student
     cursor.execute('DELETE FROM students WHERE id = ?', (student_id,))
-
-    if cursor.rowcount == 0:
-        conn.close()
-        return jsonify({'error': 'Student not found'}), 404
 
     conn.commit()
     conn.close()
@@ -434,17 +438,20 @@ def bulk_delete_students():
     conn = get_db()
     cursor = conn.cursor()
 
-    # Delete from event_students first
+    # Count existing students first
     placeholders = ','.join('?' * len(student_ids))
+    cursor.execute(f'SELECT COUNT(*) FROM students WHERE id IN ({placeholders})', student_ids)
+    existing_count = cursor.fetchone()[0]
+
+    # Delete from event_students first
     cursor.execute(f'DELETE FROM event_students WHERE student_id IN ({placeholders})', student_ids)
 
     # Then delete students
     cursor.execute(f'DELETE FROM students WHERE id IN ({placeholders})', student_ids)
-    deleted_count = cursor.rowcount
     conn.commit()
     conn.close()
 
-    return jsonify({'message': f'{deleted_count} students deleted'})
+    return jsonify({'message': f'{existing_count} students deleted'})
 
 
 @app.route('/api/students/<int:student_id>/sessions', methods=['POST'])
@@ -457,6 +464,15 @@ def update_sessions(student_id):
     conn = get_db()
     cursor = conn.cursor()
 
+    # Check if student exists first
+    cursor.execute('SELECT id, sessions FROM students WHERE id = ?', (student_id,))
+    student_row = cursor.fetchone()
+    if not student_row:
+        conn.close()
+        return jsonify({'error': 'Student not found'}), 404
+
+    current_sessions = student_row[1]
+
     if action == 'add':
         cursor.execute('''
             UPDATE students
@@ -466,20 +482,19 @@ def update_sessions(student_id):
             WHERE id = ?
         ''', (student_id,))
     elif action == 'remove':
+        if current_sessions <= 0:
+            conn.close()
+            return jsonify({'error': 'No sessions to remove'}), 400
         cursor.execute('''
             UPDATE students
-            SET sessions = MAX(0, sessions - 1),
-                total_hours = MAX(0, sessions - 1) * 0.5,
+            SET sessions = sessions - 1,
+                total_hours = (sessions - 1) * 0.5,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND sessions > 0
+            WHERE id = ?
         ''', (student_id,))
     else:
         conn.close()
         return jsonify({'error': 'Invalid action'}), 400
-
-    if cursor.rowcount == 0:
-        conn.close()
-        return jsonify({'error': 'Student not found or no sessions to remove'}), 404
 
     conn.commit()
     cursor.execute('SELECT * FROM students WHERE id = ?', (student_id,))
@@ -545,7 +560,9 @@ def create_event():
         VALUES (?, ?, ?, ?)
     ''', (name, description, hours, event_date))
 
-    event_id = cursor.lastrowid
+    # Get the event_id using last_insert_rowid()
+    cursor.execute('SELECT last_insert_rowid()')
+    event_id = cursor.fetchone()[0]
 
     # Link students to event and award hours
     sessions_to_add = round(hours / 0.5)
