@@ -438,20 +438,21 @@ def bulk_delete_students():
     conn = get_db()
     cursor = conn.cursor()
 
-    # Count existing students first
-    placeholders = ','.join('?' * len(student_ids))
-    cursor.execute(f'SELECT COUNT(*) FROM students WHERE id IN ({placeholders})', student_ids)
-    existing_count = cursor.fetchone()[0]
+    deleted_count = 0
+    for student_id in student_ids:
+        # Check if student exists
+        cursor.execute('SELECT id FROM students WHERE id = ?', (student_id,))
+        if cursor.fetchone():
+            # Delete from event_students first
+            cursor.execute('DELETE FROM event_students WHERE student_id = ?', (student_id,))
+            # Then delete the student
+            cursor.execute('DELETE FROM students WHERE id = ?', (student_id,))
+            deleted_count += 1
 
-    # Delete from event_students first
-    cursor.execute(f'DELETE FROM event_students WHERE student_id IN ({placeholders})', student_ids)
-
-    # Then delete students
-    cursor.execute(f'DELETE FROM students WHERE id IN ({placeholders})', student_ids)
     conn.commit()
     conn.close()
 
-    return jsonify({'message': f'{existing_count} students deleted'})
+    return jsonify({'message': f'{deleted_count} students deleted'})
 
 
 @app.route('/api/students/<int:student_id>/sessions', methods=['POST'])
