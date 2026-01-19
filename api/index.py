@@ -43,12 +43,59 @@ def get_db():
     return conn
 
 
-def dict_from_row(cursor, row):
-    """Convert a row to a dictionary using cursor description"""
+def student_to_dict(row):
+    """Convert a student row to dictionary"""
     if row is None:
         return None
-    columns = [col[0] for col in cursor.description]
-    return dict(zip(columns, row))
+    return {
+        'id': row[0],
+        'name': row[1],
+        'email': row[2],
+        'student_key': row[3],
+        'sessions': row[4],
+        'total_hours': row[5],
+        'created_at': row[6],
+        'updated_at': row[7]
+    }
+
+def event_to_dict(row):
+    """Convert an event row to dictionary"""
+    if row is None:
+        return None
+    return {
+        'id': row[0],
+        'name': row[1],
+        'description': row[2],
+        'hours': row[3],
+        'event_date': row[4],
+        'registered_date': row[5],
+        'created_at': row[6]
+    }
+
+def session_to_dict(row):
+    """Convert a session row to dictionary"""
+    if row is None:
+        return None
+    return {
+        'id': row[0],
+        'token': row[1],
+        'username': row[2],
+        'created_at': row[3],
+        'expires_at': row[4]
+    }
+
+def log_to_dict(row):
+    """Convert a security log row to dictionary"""
+    if row is None:
+        return None
+    return {
+        'id': row[0],
+        'event_type': row[1],
+        'details': row[2],
+        'ip_address': row[3],
+        'user_agent': row[4],
+        'created_at': row[5]
+    }
 
 
 def init_db():
@@ -259,7 +306,7 @@ def get_students():
     cursor = conn.cursor()
     cursor.execute('SELECT * FROM students ORDER BY name')
     rows = cursor.fetchall()
-    students = [dict_from_row(cursor, row) for row in rows]
+    students = [student_to_dict(row) for row in rows]
     conn.close()
 
     return jsonify(students)
@@ -298,7 +345,7 @@ def create_student():
     conn.commit()
 
     cursor.execute('SELECT * FROM students WHERE id = ?', (student_id,))
-    student = dict_from_row(cursor, cursor.fetchone())
+    student = student_to_dict(cursor.fetchone())
     conn.close()
 
     return jsonify(student), 201
@@ -317,7 +364,7 @@ def get_student(student_id):
     if not row:
         return jsonify({'error': 'Student not found'}), 404
 
-    return jsonify(dict_from_row(cursor, row))
+    return jsonify(student_to_dict(row))
 
 
 @app.route('/api/students/<int:student_id>', methods=['PUT'])
@@ -345,7 +392,7 @@ def update_student(student_id):
 
     conn.commit()
     cursor.execute('SELECT * FROM students WHERE id = ?', (student_id,))
-    student = dict_from_row(cursor, cursor.fetchone())
+    student = student_to_dict(cursor.fetchone())
     conn.close()
 
     return jsonify(student)
@@ -436,7 +483,7 @@ def update_sessions(student_id):
 
     conn.commit()
     cursor.execute('SELECT * FROM students WHERE id = ?', (student_id,))
-    student = dict_from_row(cursor, cursor.fetchone())
+    student = student_to_dict(cursor.fetchone())
     conn.close()
 
     return jsonify(student)
@@ -456,7 +503,7 @@ def get_events():
     events = []
 
     for row in event_rows:
-        event = dict_from_row(cursor, row)
+        event = event_to_dict(row)
         # Get students for this event
         cursor.execute('''
             SELECT s.id, s.name
@@ -465,7 +512,7 @@ def get_events():
             WHERE es.event_id = ?
         ''', (event['id'],))
         student_rows = cursor.fetchall()
-        event['students'] = [dict_from_row(cursor, s) for s in student_rows]
+        event['students'] = [{'id': s[0], 'name': s[1]} for s in student_rows]
         events.append(event)
 
     conn.close()
@@ -521,14 +568,14 @@ def create_event():
 
     # Return created event with students
     cursor.execute('SELECT * FROM events WHERE id = ?', (event_id,))
-    event = dict_from_row(cursor, cursor.fetchone())
+    event = event_to_dict(cursor.fetchone())
     cursor.execute('''
         SELECT s.id, s.name
         FROM students s
         JOIN event_students es ON s.id = es.student_id
         WHERE es.event_id = ?
     ''', (event_id,))
-    event['students'] = [dict_from_row(cursor, s) for s in cursor.fetchall()]
+    event['students'] = [{'id': s[0], 'name': s[1]} for s in cursor.fetchall()]
 
     conn.close()
     return jsonify(event), 201
@@ -549,7 +596,7 @@ def delete_event(event_id):
         conn.close()
         return jsonify({'error': 'Event not found'}), 404
 
-    event = dict_from_row(cursor, event_row)
+    event = event_to_dict(event_row)
     hours = event['hours']
     sessions_to_remove = round(hours / 0.5)
 
@@ -606,7 +653,7 @@ def get_student_public():
         conn.close()
         return jsonify({'error': 'Student not found or invalid key'}), 404
 
-    student = dict_from_row(cursor, row)
+    student = student_to_dict(row)
 
     # Get events for this student
     cursor.execute('''
@@ -616,7 +663,7 @@ def get_student_public():
         WHERE es.student_id = ?
         ORDER BY e.event_date DESC
     ''', (student['id'],))
-    events = [dict_from_row(cursor, e) for e in cursor.fetchall()]
+    events = [event_to_dict(e) for e in cursor.fetchall()]
 
     conn.close()
 
@@ -672,19 +719,20 @@ def export_data():
     cursor = conn.cursor()
 
     cursor.execute('SELECT * FROM students')
-    students = [dict_from_row(cursor, row) for row in cursor.fetchall()]
+    students = [student_to_dict(row) for row in cursor.fetchall()]
 
     cursor.execute('SELECT * FROM events')
+    event_rows = cursor.fetchall()
     events = []
-    for row in cursor.fetchall():
-        event = dict_from_row(cursor, row)
+    for row in event_rows:
+        event = event_to_dict(row)
         cursor.execute('''
             SELECT s.id, s.name
             FROM students s
             JOIN event_students es ON s.id = es.student_id
             WHERE es.event_id = ?
         ''', (event['id'],))
-        event['students'] = [dict_from_row(cursor, s) for s in cursor.fetchall()]
+        event['students'] = [{'id': s[0], 'name': s[1]} for s in cursor.fetchall()]
         events.append(event)
 
     conn.close()
@@ -753,7 +801,7 @@ def get_security_log():
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('SELECT * FROM security_log ORDER BY created_at DESC LIMIT 100')
-    logs = [dict_from_row(cursor, row) for row in cursor.fetchall()]
+    logs = [log_to_dict(row) for row in cursor.fetchall()]
     conn.close()
 
     return jsonify(logs)
